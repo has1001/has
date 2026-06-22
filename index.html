@@ -260,7 +260,7 @@ a.gig-card{display:block;color:inherit}
 .contact-mail{
   display:inline-block;
   font-family:var(--font-en);font-weight:300;
-  font-size:clamp(24px,5.6vw,64px);letter-spacing:-.03em;
+  font-size:clamp(16px,2.2vw,32px);letter-spacing:-.02em;
   border-bottom:1px solid var(--hairline);
   padding-bottom:10px;
   transition:color .3s,border-color .3s;
@@ -561,12 +561,15 @@ a.gig-card{display:block;color:inherit}
 /* ============ gigs auto-update (google sheets) ============ */
 /*
   運用方法(シートの1つ目のタブを使用):
-  1行目はヘッダー: date | event | venue | type | photo | link
-  - type:  upcoming または past
-  - photo: 過去ギグカード用の画像(任意)。Driveの共有リンクを
-           そのまま貼ればOK(リンクを知っている全員が閲覧可に設定)
-  - link:  カードのリンク先(任意)。Instagramの投稿URLを貼ると
-           カードタップでその投稿が開きます
+  1行目はヘッダー: date | event | venue | photo | link
+  - date:  YYYY-MM-DD または YYYY/MM/DD または 2026年7月1日 形式
+  - photo: ギグカード用の画像(任意)。Driveの共有リンクをそのまま貼る
+  - link:  カードのリンク先(任意)。Instagramの投稿URLなど
+
+  ※ type列は不要です。日付に基づき自動でupcoming/pastを分類します。
+  ※ Flyer画像からの自動読み取りは別途「gigs.md」を追加して
+     Google Apps Script で実装しています(gigs.mdを参照)。
+  
   シートに行を追加するだけでサイトに自動反映されます。
 */
 (function(){
@@ -610,17 +613,22 @@ a.gig-card{display:block;color:inherit}
       rows = rows.slice(1); /* ヘッダー行を除外 */
 
       var upcoming = [], past = [];
+      var today = new Date(); today.setHours(0,0,0,0);
       rows.forEach(function(r){
         var item = {
-          date:  (r[0] || '').trim(),
-          name:  (r[1] || '').trim(),
-          venue: (r[2] || '').trim(),
-          type:  (r[3] || '').trim().toLowerCase(),
-          photo: (r[4] || '').trim(),
-          link:  (r[5] || '').trim()
+          dateStr: (r[0] || '').trim(),
+          name:    (r[1] || '').trim(),
+          venue:   (r[2] || '').trim(),
+          photo:   (r[4] || '').trim(),
+          link:    (r[5] || '').trim()
         };
-        if (!item.date && !item.name) return;
-        (item.type === 'past' ? past : upcoming).push(item);
+        if (!item.dateStr && !item.name) return;
+        item.date = parseDate(item.dateStr);
+        if (item.date && item.date < today) {
+          past.push(item);
+        } else {
+          upcoming.push(item);
+        }
       });
 
       if (upList) {
@@ -644,7 +652,7 @@ a.gig-card{display:block;color:inherit}
     items.forEach(function(it){
       var li = document.createElement('li');
       li.className = 'gig-row';
-      [['gig-date', it.date], ['gig-name', it.name], ['gig-venue', it.venue]].forEach(function(c){
+      [['gig-date', formatJapaneseDate(it.dateStr)], ['gig-name', it.name], ['gig-venue', it.venue]].forEach(function(c){
         var s = document.createElement('span');
         s.className = c[0];
         s.textContent = c[1] || '';
@@ -698,7 +706,7 @@ a.gig-card{display:block;color:inherit}
       }
       card.appendChild(media);
 
-      [['p','gig-card-date',it.date],['h3','gig-card-name',it.name],['p','gig-card-venue',it.venue]].forEach(function(c){
+      [['p','gig-card-date',formatJapaneseDate(it.date) || it.dateStr],['h3','gig-card-name',it.name],['p','gig-card-venue',it.venue]].forEach(function(c){
         var el = document.createElement(c[0]);
         el.className = c[1];
         el.textContent = c[2] || '';
@@ -706,6 +714,16 @@ a.gig-card{display:block;color:inherit}
       });
       grid.appendChild(card);
     });
+  }
+
+  function formatJapaneseDate(d) {
+    if (!d) return '';
+    if (typeof d === 'string') return d;
+    if (!(d instanceof Date)) return d;
+    var day = String(d.getDate()).padStart(2, '0');
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var days = ['日','月','火','水','木','金','土'];
+    return d.getFullYear() + '/' + m + '/' + day + '(' + days[d.getDay()] + ')';
   }
 
   function placeholderEl(name){
@@ -721,6 +739,20 @@ a.gig-card{display:block;color:inherit}
     var words = n.split(/[\s・]+/).filter(Boolean);
     var s = words.slice(0, 2).map(function(w){ return w.charAt(0); }).join('');
     return s.toUpperCase() || '—';
+  }
+
+  /* 日付文字列をDateオブジェクトに変換 (YYYY-MM-DD, YYYY/MM/DD, 2026年7月1日, 7月1日) */
+  function parseDate(s) {
+    if (!s) return null;
+    var d = new Date(s);
+    if (!isNaN(d.getTime())) return d;
+    /* 日本語形式: 2026年7月1日 */
+    var m = s.match(/(\d{4})年(\d{1,2})月(\d{1,2})日?/);
+    if (m) return new Date(+m[1], +m[2]-1, +m[3]||1);
+    /* 月日みの場合: 7月1日 (今年とみなす) */
+    m = s.match(/(\d{1,2})月(\d{1,2})日?/);
+    if (m) { var y = new Date().getFullYear(); return new Date(y, +m[1]-1, +m[2]||1); }
+    return null;
   }
 
   /* Driveの共有リンクを画像表示用URLに自動変換 */
