@@ -122,7 +122,7 @@ for img_path in sorted(images):
         print(f"    duplicate")
         continue
 
-    # Photo URL - use folder link as fallback
+    # Photo URL - user manually entered, or use folder as fallback
     photo = f"flyers/{fn}"
     if DRIVE_FOLDER_ID:
         photo = f"https://drive.google.com/file/d/{DRIVE_FOLDER_ID}/view?usp=sharing"
