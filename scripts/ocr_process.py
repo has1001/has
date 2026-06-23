@@ -13,7 +13,7 @@ from pathlib import Path
 # Google Cloud Vision API
 from google.cloud import vision
 
-# Google Sheets (gspread v6+)
+# Google Sheets
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -24,11 +24,11 @@ SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS", "")
 
 # Google Sheets 列番号
-COL_DATE = 0       # A: 日付
-COL_EVENT = 1      # B: イベント名
-COL_VENUE = 2      # C: 会場
-COL_PHOTO = 3      # D: 画像
-COL_LINK = 4       # E: リンク
+COL_DATE = 0
+COL_EVENT = 1
+COL_VENUE = 2
+COL_PHOTO = 3
+COL_LINK = 4
 
 DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 
@@ -36,7 +36,8 @@ DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 def get_gc():
     """gspread Client を作成"""
     if not SHEET_ID or not CREDENTIALS_JSON:
-        print("  [SKIP] GOOGLE_CREDENTIALS / GOOGLE_SHEET_ID 未設定")
+        print(f"[ERR] GOOGLE_CREDENTIALS: {'設定' if CREDENTIALS_JSON else '未設定'}")
+        print(f"[ERR] GOOGLE_SHEET_ID: {'設定' if SHEET_ID else '未設定'}")
         return None
     try:
         creds = Credentials.from_service_account_info(
@@ -45,7 +46,7 @@ def get_gc():
         )
         return gspread.Client(auth=creds)
     except Exception as e:
-        print(f"  [ERR] Google Sheets 接続エラー: {e}")
+        print(f"[ERR] 認証エラー: {e}")
         return None
 
 
@@ -57,15 +58,17 @@ def get_sheets_data(gc):
         sh = gc.authorize().open_by_key(SHEET_ID)
         ws = sh.sheet1
         data = ws.get_all_values()
+        print(f"  [OK] シート取得: {len(data)}行")
         return data[1:] if data else []
     except Exception as e:
-        print(f"  [ERR] シート取得エラー: {e}")
+        print(f"  [ERR] シート取得失敗: {e}")
         return []
 
 
 def update_sheet(gc, data):
     """シートを更新"""
     if not gc:
+        print("[SKIP] クライアント未設定のため更新跳过")
         return True
     try:
         sh = gc.authorize().open_by_key(SHEET_ID)
@@ -75,9 +78,12 @@ def update_sheet(gc, data):
         ws.update("A1:E1", [["date", "event", "venue", "photo", "link"]])
         if data:
             ws.update("A2:E" + str(len(data) + 1), data)
+        print(f"  [OK] {len(data)}行を更新")
         return True
     except Exception as e:
-        print(f"  [ERR] シート更新エラー: {e}")
+        print(f"  [ERR] 更新失敗: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -159,7 +165,6 @@ def extract_event_info(text, filename):
 
 
 def is_duplicate(sheets_data, date, name):
-    """既存データと重複チェック"""
     for row in sheets_data:
         if not row or len(row) < 2:
             continue
@@ -172,7 +177,9 @@ def is_duplicate(sheets_data, date, name):
 
 def main():
     print("=== Flyer OCR Processing ===")
-    print(f"SHEET_ID: {SHEET_ID[:8] if SHEET_ID else '(未設定)'}...")
+    print(f"SHEET_ID: {'設定' if SHEET_ID else '未設定'}")
+    print(f"CREDENTIALS: {'設定' if CREDENTIALS_JSON else '未設定'}")
+    print(f"DRIVE_FOLDER_ID: {'設定' if DRIVE_FOLDER_ID else '未設定'}")
 
     # 画像ファイル取得
     image_files = []
@@ -185,11 +192,11 @@ def main():
 
     print(f"画像数: {len(image_files)}")
 
-    # Google Sheets クライアント
     gc = get_gc()
 
     # 既存データ
     sheet_data = get_sheets_data(gc)
+    print(f"  既存: {len(sheet_data)}行")
 
     added = 0
     for img_path in sorted(image_files):
@@ -200,48 +207,38 @@ def main():
         text = ocr_image(img_path)
         if not text or len(text.strip()) < 10:
             print("  (テキスト抽出結果が短すぎます)")
+            print(f"  OCR結果: '{text}'")
             continue
-        print(f"  OCR: {text[:80]}...")
+        print(f"  OCR: {text[:100]}...")
 
         # 抽出
         info = extract_event_info(text, filename)
         print(f"  date={info['date']} name={info['name']} venue={info['venue']}")
 
-        # 必須チェック
         if not info["date"] or not info["name"]:
             print("  ✗ 抽出失敗")
             continue
 
-        # 重複
         if is_duplicate(sheet_data, info["date"], info["name"]):
             print("  ⊘ 重複")
             continue
 
-        # 画像URL
         photo_url = f"flyers/{filename}"
         if DRIVE_FOLDER_ID:
             photo_url = f"https://drive.google.com/file/d/{DRIVE_FOLDER_ID}/view?usp=sharing"
 
-        sheet_data.append([info["date"], info["name"], info["venue"], photo_url, ""])
+        row = [info["date"], info["name"], info["venue"], photo_url, ""]
+        sheet_data.append(row)
         added += 1
         print("  ✓ 追加")
 
     # シート更新
     if added > 0:
         print(f"\n--- {added}件追加 ---")
-        if update_sheet(gc, sheet_data):
-            print("✅ シート更新完了")
-        else:
-            print("✗ シート更新失敗")
+        update_sheet(gc, sheet_data)
     else:
         print("\n--- 追加データなし ---")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"FATAL: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    main()
