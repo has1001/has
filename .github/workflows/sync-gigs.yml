@@ -8,8 +8,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "=== SECRETS ===" && echo "SHEET: $(echo $GOOGLE_SHEET_ID | head -c 10)" && echo "CREDS: $(echo $GOOGLE_CREDENTIALS | head -c 10)" && echo "DRIVE: $(echo $DRIVE_FOLDER_ID | head -c 10)" && echo "=== DONE ==="
+      - run: |
+          echo "=== LOG ===" > output.txt
+          echo "SHEET: ${GOOGLE_SHEET_ID:0:10}..." >> output.txt
+          echo "CREDS: ${GOOGLE_CREDENTIALS:0:10}..." >> output.txt
+          echo "DRIVE: ${DRIVE_FOLDER_ID:0:10}..." >> output.txt
+          echo "=== END ===" >> output.txt
+          cat output.txt
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: output
+          path: output.txt
