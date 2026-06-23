@@ -128,14 +128,8 @@ for img_path in sorted(images):
         print(f"    duplicate")
         continue
 
-    # Photo URL - use user's value if exists, or use Drive direct link
+    # Photo URL - user's manually entered Drive URL
     photo = existing_lookup.get((date, name.lower()), "")
-    if not photo:
-        # Convert Drive folder link to direct image link
-        if DRIVE_FOLDER_ID:
-            photo = f"https://lh3.googleusercontent.com/d/{DRIVE_FOLDER_ID}"
-        else:
-            photo = f"flyers/{fn}"
 
     added.append([date, name, venue, photo, ""])
     print(f"    ✓")
