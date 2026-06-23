@@ -25,4 +25,39 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
-        run: python scripts/ocr_process.py
+        run: |
+          set -e
+          echo "=== Starting OCR Process ==="
+          echo "ENV CHECK:"
+          echo "  GOOGLE_SHEET_ID: $([ -n \"$GOOGLE_SHEET_ID\" ] && echo 'SET' || echo 'NOT SET')"
+          echo "  GOOGLE_CREDENTIALS: $([ -n \"$GOOGLE_CREDENTIALS\" ] && echo 'SET' || echo 'NOT SET')"
+          echo "  DRIVE_FOLDER_ID: $([ -n \"$DRIVE_FOLDER_ID\" ] && echo 'SET' || echo 'NOT SET')"
+          echo ""
+          python scripts/ocr_process.py
+          echo "=== Process Complete ==="
+
+      - name: Show sheet
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+        run: |
+          set -e
+          echo "Checking sheet after update..."
+          python3 << 'PYEOF'
+import json
+import gspread
+from google.oauth2.service_account import Credentials
+import os
+
+creds = Credentials.from_service_account_info(
+    json.loads(os.environ["GOOGLE_CREDENTIALS"]),
+    scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
+)
+gc = gspread.Client(auth=creds)
+sh = gc.authorize().open_by_key(os.environ["GOOGLE_SHEET_ID"])
+ws = sh.sheet1
+data = ws.get_all_values()
+print(f"Sheet rows: {len(data)}")
+for i, row in enumerate(data[:5]):
+    print(f"  Row {i}: {row}")
+PYEOF
