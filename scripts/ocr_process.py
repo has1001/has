@@ -60,6 +60,13 @@ except Exception as e:
     print(f"  ✗ OCR ERROR: {e}")
     sys.exit(1)
 
+# Build existing lookup for preserving user photo URLs
+existing_lookup = {}
+for row in existing:
+    if len(row) >= 2 and row[0] and row[1]:
+        key = (str(row[0]).strip(), str(row[1]).strip().lower())
+        existing_lookup[key] = row[3] if len(row) > 3 else ""
+
 added = []
 for img_path in sorted(images):
     fn = os.path.basename(img_path)
@@ -121,10 +128,12 @@ for img_path in sorted(images):
         print(f"    duplicate")
         continue
 
-    # Photo URL - use user's manually entered value or fallback
-    photo = f"flyers/{fn}"
-    if DRIVE_FOLDER_ID:
-        photo = f"https://drive.google.com/file/d/{DRIVE_FOLDER_ID}/view?usp=sharing"
+    # Photo URL - use user's value if exists, or fallback
+    photo = existing_lookup.get((date, name.lower()), "")
+    if not photo:
+        photo = f"flyers/{fn}"
+        if DRIVE_FOLDER_ID:
+            photo = f"https://drive.google.com/file/d/{DRIVE_FOLDER_ID}/view?usp=sharing"
 
     added.append([date, name, venue, photo, ""])
     print(f"    ✓")
