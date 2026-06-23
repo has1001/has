@@ -1,22 +1,14 @@
-name: Flyer OCR to Google Sheets
+name: Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  process:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install deps
-        run: pip install -r scripts/requirements.txt
-      - name: Run
-        run: python scripts/ocr_process.py
+      - uses: actions/checkout@v4
+      - run: echo "=== SECRETS ===" && echo "SHEET: $(echo $GOOGLE_SHEET_ID | head -c 10)" && echo "CREDS: $(echo $GOOGLE_CREDENTIALS | head -c 10)" && echo "DRIVE: $(echo $DRIVE_FOLDER_ID | head -c 10)" && echo "=== DONE ==="
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
