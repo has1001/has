@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Google Sheets 自動管理スクリプト
-※日付が過ぎたギグを archive に自動移動するだけのシンプルなスクリプト
+- 日付が過ぎたギグを archive に自動移動
+- 既存のphoto URLは上書きしない
 """
-import sys, json, re
+import sys, json
+from datetime import datetime
 from google.oauth2.service_account import Credentials
 import gspread
 
@@ -15,7 +17,6 @@ if not SHEET_ID or not CREDS_JSON:
     print("シークレット未設定。スキップ。")
     sys.exit(0)
 
-# Sheets 接続
 try:
     creds = Credentials.from_service_account_info(
         json.loads(CREDS_JSON),
@@ -33,31 +34,39 @@ if len(data) < 2:
     print("データなし。")
     sys.exit(0)
 
-# ヘッダー除外
 rows = data[1:]
 print(f"既存データ: {len(rows)}行")
 
-# 日付判定
-from datetime import datetime
-today = datetime.now()
+# 既存photo URLの保存
+saved_photos = {}
+for i, row in enumerate(rows):
+    if len(row) >= 2 and row[0] and row[1]:
+        key = (str(row[0]).strip(), str(row[1]).strip().lower())
+        saved_photos[key] = row[3] if len(row) > 3 else ""
 
+today = datetime.now()
 archived = 0
 for i, row in enumerate(rows):
     if len(row) >= 1 and row[0]:
         try:
             gig_date = datetime.strptime(row[0], "%Y-%m-%d")
             if gig_date < today:
-                # 既に past としてマーク済みならスキップ
+                # already archived?
                 if len(row) > 4 and row[4].strip() == "past":
                     continue
-                # past マーク
+                # restore photo URL if user had one
+                key = (row[0], row[1].strip().lower())
+                if key in saved_photos and saved_photos[key]:
+                    while len(row) < 4:
+                        row.append("")
+                    row[3] = saved_photos[key]
+                # mark as past
                 row.append("past")
                 rows[i] = row
                 archived += 1
         except ValueError:
             pass
 
-# 更新
 if archived > 0:
     try:
         ws.clear()
