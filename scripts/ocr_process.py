@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
+"""Flyer → OCR → Google Sheets"""
 import os, sys, re, json, glob
-from datetime import datetime
 from pathlib import Path
 from google.cloud import vision
 import gspread
@@ -11,109 +11,122 @@ SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS", "")
 DRIVE_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 
-# === 1. ENV CHECK ===
-print("=== ENV CHECK ===")
-sid = SHEET_ID or "NOT SET"
-crd = CREDS_JSON or "NOT SET"
-drv = DRIVE_ID or "NOT SET"
-print(f"  SHEET: {sid[:10]}...")
-print(f"  CREDS: {crd[:10]}...")
-print(f"  DRIVE: {drv[:10]}...")
+print("Step 1: ENV CHECK")
+print(f"  SHEET_ID: {'SET ✓' if SHEET_ID else '✗ NOT SET'}")
+print(f"  CREDS:    {'SET ✓' if CREDS_JSON else '✗ NOT SET'}")
+print(f"  DRIVE:    {'SET ✓' if DRIVE_ID else '✗ NOT SET'}")
 
-# === 2. OCR ===
-image_files = glob.glob(str(FLYERS_DIR / "*.{jpg,jpeg,png,JPG,JPEG,PNG}"))
-print(f"\n=== FILES: {len(image_files)} ===")
+if not SHEET_ID or not CREDS_JSON:
+    print("\nERROR: シークレット未設定です。GitHub Settings → Secrets に登録してください。")
+    sys.exit(1)
 
-if not image_files:
-    print("No images. Exit.")
+print(f"\nStep 2: FILES ({FLYERS_DIR})")
+images = []
+for f in os.listdir(FLYERS_DIR):
+    if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+        images.append(str(FLYERS_DIR / f))
+print(f"  {len(images)} images found")
+if not images:
+    print("  No images. Exit.")
     sys.exit(0)
 
-# Google Sheets setup
-gc = None
-if SID := SHEET_ID and CREDS_JSON:
-    try:
-        creds = Credentials.from_service_account_info(
-            json.loads(CREDS_JSON),
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-        gc = gspread.Client(auth=creds)
-        sh = gc.authorize().open_by_key(SID)
-        ws = sh.sheet1
-        data = ws.get_all_values()
-        existing = data[1:] if data else []
-        print(f"  Sheets OK: {len(existing)} rows")
-    except Exception as e:
-        print(f"  Sheets ERR: {e}")
+print("\nStep 3: Google Sheets connect")
+try:
+    creds = Credentials.from_service_account_info(
+        json.loads(CREDS_JSON),
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    gc = gspread.Client(auth=creds)
+    sh = gc.authorize().open_by_key(SHEET_ID)
+    ws = sh.sheet1
+    data = ws.get_all_values()
+    existing = data[1:] if data else []
+    print(f"  Connected! {len(existing)} rows existing")
+except Exception as e:
+    print(f"  ERROR: {e}")
+    sys.exit(1)
 
-# Process images
+print("\nStep 4: OCR")
 added = []
-for img in sorted(image_files):
-    fn = os.path.basename(img)
-    print(f"\n→ {fn}")
-    # OCR
+for img_path in sorted(images):
+    fn = os.path.basename(img_path)
+    print(f"  → {fn}")
     try:
         client = vision.ImageTextDetector()
-        with open(img, "rb") as f:
-            resp = client.detect_text(vision.Image(content=f.read()))
-        text = resp.text_annotations[0].description if resp.text_annotations else ""
+        with open(img_path, "rb") as f:
+            image = vision.Image(content=f.read())
+        response = client.detect_text(image=image)
+        texts = response.text_annotations
+        text = texts[0].description if texts else ""
     except Exception as e:
-        print(f"  OCR ERR: {e}")
-        text = ""
-    
-    if not text:
-        print("  (empty)")
+        print(f"    OCR ERROR: {e}")
         continue
+    
+    if len(text.strip()) < 10:
+        print(f"    (too short: {len(text)} chars)")
+        continue
+    
+    print(f"    OCR: {text[:60]}...")
     
     # Parse date
     m = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', text)
-    if m:
-        date = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
-    else:
-        date = ""
+    date = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else ""
     
-    # Parse name from filename
+    # Parse name
     stem = Path(fn).stem
     dm = re.match(r'^(\d{8})', stem)
     name = stem[len(dm[1]):].replace("_", " ").title() if dm else ""
     
-    print(f"  date={date} name={name}")
+    print(f"    date={date} name={name}")
     
     if not date or not name:
-        print("  SKIP")
+        print("    SKIP (missing date/name)")
         continue
     
     # Check duplicate
     is_dup = False
-    for row in existing or []:
-        if len(row) >= 2 and str(row[0]).strip() == date and str(row[1]).strip().lower() == name.lower():
-            is_dup = True
-            break
+    for row in existing:
+        if len(row) >= 2:
+            d = str(row[0]).strip()
+            n = str(row[1]).strip().lower()
+            if d == date and n == name.lower():
+                is_dup = True
+                break
     
     if is_dup:
-        print("  duplicate")
+        print("    SKIP (duplicate)")
         continue
     
-    # Photo URL
     photo = f"flyers/{fn}"
     if DRIVE_ID:
         photo = f"https://drive.google.com/file/d/{DRIVE_ID}/view?usp=sharing"
     
     added.append([date, name, "", photo, ""])
+    print("    ✓")
 
-print(f"\n=== ADDED: {len(added)} ===")
-
-# === 3. UPDATE SHEET ===
-if gc and added:
+print(f"\nStep 5: UPDATE ({len(added)} new)")
+if added:
     try:
         data.extend(added)
         data.sort(key=lambda r: str(r[0]) if r[0] else "0000", reverse=True)
         ws.clear()
         ws.update("A1:E1", [["date", "event", "venue", "photo", "link"]])
         ws.update("A2:E" + str(len(data) + 1), data)
-        print("  Sheet UPDATED!")
+        print("  ✓ Sheet UPDATED!")
     except Exception as e:
-        print(f"  Sheet ERR: {e}")
+        print(f"  ERROR: {e}")
+        import traceback
+        traceback.print_exc()
 else:
-    print("  SKIP (no gc or no added)")
+    print("  SKIP (no new data)")
 
-print("=== DONE ===")
+print("\nStep 6: VERIFY")
+try:
+    fresh = ws.get_all_values()
+    print(f"  Sheet now has {len(fresh)} rows")
+    for i, row in enumerate(fresh[:5]):
+        print(f"    Row {i}: {row}")
+except Exception as e:
+    print(f"  ERROR: {e}")
+
+print("\n=== COMPLETE ===")
