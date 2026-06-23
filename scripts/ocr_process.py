@@ -122,6 +122,7 @@ for img_path in sorted(images):
         print(f"    duplicate")
         continue
 
+    # Photo URL - get file ID from folder
     photo = f"flyers/{fn}"
     if DRIVE_ID:
         photo = f"https://drive.google.com/file/d/{DRIVE_ID}/view?usp=sharing"
