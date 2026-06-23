@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Flyer → OCR → Google Sheets"""
-import os, sys, re, json, glob
+import os, sys, re, json
 from pathlib import Path
 from google.cloud import vision
 import gspread
@@ -9,13 +9,13 @@ from google.oauth2.service_account import Credentials
 FLYERS_DIR = Path(__file__).resolve().parent.parent / "flyers"
 SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS", "")
-DRIVE_ID = os.environ.get("DRIVE_FOLDER_ID", "")
+DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 
 # === 1. ENV CHECK ===
 print("Step 1: ENV CHECK")
 print(f"  SHEET_ID: {'SET ✓' if SHEET_ID else '✗ NOT SET'}")
 print(f"  CREDS:    {'SET ✓' if CREDS_JSON else '✗ NOT SET'}")
-print(f"  DRIVE:    {'SET ✓' if DRIVE_ID else '✗ NOT SET'}")
+print(f"  DRIVE:    {'SET ✓' if DRIVE_FOLDER_ID else '✗ NOT SET'}")
 
 if not SHEET_ID or not CREDS_JSON:
     print("\nERROR: シークレット未設定です。")
@@ -122,10 +122,10 @@ for img_path in sorted(images):
         print(f"    duplicate")
         continue
 
-    # Photo URL - get file ID from folder
+    # Photo URL - use folder link as fallback
     photo = f"flyers/{fn}"
-    if DRIVE_ID:
-        photo = f"https://drive.google.com/file/d/{DRIVE_ID}/view?usp=sharing"
+    if DRIVE_FOLDER_ID:
+        photo = f"https://drive.google.com/file/d/{DRIVE_FOLDER_ID}/view?usp=sharing"
 
     added.append([date, name, venue, photo, ""])
     print(f"    ✓")
