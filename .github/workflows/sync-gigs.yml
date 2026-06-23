@@ -1,25 +1,25 @@
-name: Test
+name: Flyer OCR to Google Sheets
 
 on:
+  schedule:
+    - cron: "0 21 * * *"
   workflow_dispatch:
 
 jobs:
-  test:
+  process:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: |
-          echo "=== LOG ===" > output.txt
-          echo "SHEET: ${GOOGLE_SHEET_ID:0:10}..." >> output.txt
-          echo "CREDS: ${GOOGLE_CREDENTIALS:0:10}..." >> output.txt
-          echo "DRIVE: ${DRIVE_FOLDER_ID:0:10}..." >> output.txt
-          echo "=== END ===" >> output.txt
-          cat output.txt
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r scripts/requirements.txt
+      - name: Run
+        run: python scripts/ocr_process.py
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: output
-          path: output.txt
