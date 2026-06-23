@@ -20,32 +20,27 @@ jobs:
       - name: Install deps
         run: pip install -r scripts/requirements.txt
 
-      - name: OCR + Sync
-        env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+      - name: Check Secrets
         run: |
-          set -e
-          echo "=== Starting OCR Process ==="
-          echo "ENV CHECK:"
-          echo "  GOOGLE_SHEET_ID: $([ -n \"$GOOGLE_SHEET_ID\" ] && echo 'SET' || echo 'NOT SET')"
-          echo "  GOOGLE_CREDENTIALS: $([ -n \"$GOOGLE_CREDENTIALS\" ] && echo 'SET' || echo 'NOT SET')"
-          echo "  DRIVE_FOLDER_ID: $([ -n \"$DRIVE_FOLDER_ID\" ] && echo 'SET' || echo 'NOT SET')"
-          echo ""
-          python scripts/ocr_process.py
-          echo "=== Process Complete ==="
+          echo "SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID != '' && 'SET ✓' || 'NOT SET ✗' }}"
+          echo "CREDS: ${{ secrets.GOOGLE_CREDENTIALS != '' && 'SET ✓' || 'NOT SET ✗' }}"
+          echo "DRIVE: ${{ secrets.DRIVE_FOLDER_ID != '' && 'SET ✓' || 'NOT SET ✗' }}"
 
-      - name: Show sheet
-        env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      - name: OCR + Sync
         run: |
-          set -e
-          echo "Checking sheet after update..."
+          python scripts/ocr_process.py 2>&1 | tee /tmp/ocr.log
+          echo "---LOG---"
+          cat /tmp/ocr.log
+          echo "---END---"
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+
+      - name: Verify Sheet
+        run: |
           python3 << 'PYEOF'
-import json
-import gspread
+import json, gspread
 from google.oauth2.service_account import Credentials
 import os
 
@@ -57,7 +52,10 @@ gc = gspread.Client(auth=creds)
 sh = gc.authorize().open_by_key(os.environ["GOOGLE_SHEET_ID"])
 ws = sh.sheet1
 data = ws.get_all_values()
-print(f"Sheet rows: {len(data)}")
-for i, row in enumerate(data[:5]):
+print(f"Sheet has {len(data)} rows")
+for i, row in enumerate(data[:10]):
     print(f"  Row {i}: {row}")
 PYEOF
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
