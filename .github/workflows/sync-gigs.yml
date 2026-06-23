@@ -26,11 +26,3 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
         run: python scripts/ocr_process.py
-
-      - name: Show result
-        if: success()
-        run: echo "✅ Flyer OCR 完了"
-
-      - name: Show error
-        if: failure()
-        run: echo "❌ 失敗しました。GOOGLE_CREDENTIALS のJSON形式を確認してください。"

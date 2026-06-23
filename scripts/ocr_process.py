@@ -33,11 +33,10 @@ COL_LINK = 4       # E: リンク
 DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 
 
-# ── Google Sheets ─────────────────────────────────────
-
 def get_gc():
     """gspread Client を作成"""
     if not SHEET_ID or not CREDENTIALS_JSON:
+        print("  [SKIP] GOOGLE_CREDENTIALS / GOOGLE_SHEET_ID 未設定")
         return None
     try:
         creds = Credentials.from_service_account_info(
@@ -46,57 +45,54 @@ def get_gc():
         )
         return gspread.Client(auth=creds)
     except Exception as e:
-        print(f"  ✗ Google Sheets 接続エラー: {e}")
+        print(f"  [ERR] Google Sheets 接続エラー: {e}")
         return None
 
 
 def get_sheets_data(gc):
     """シートデータを取得"""
     if not gc:
-        print("  ✗ GOOGLE_CREDENTIALS / GOOGLE_SHEET_ID が必要です")
         return []
     try:
         sh = gc.authorize().open_by_key(SHEET_ID)
         ws = sh.sheet1
         data = ws.get_all_values()
-        return data[1:] if data else []  # ヘッダー除外
+        return data[1:] if data else []
     except Exception as e:
-        print(f"  ✗ シート取得エラー: {e}")
+        print(f"  [ERR] シート取得エラー: {e}")
         return []
 
 
 def update_sheet(gc, data):
-    """シートを更新（日付順ソート）"""
+    """シートを更新"""
     if not gc:
-        return
+        return True
     try:
         sh = gc.authorize().open_by_key(SHEET_ID)
         ws = sh.sheet1
-        # 日付でソート（新しい順）
         data.sort(key=lambda r: str(r[COL_DATE]) if r[COL_DATE] else "0000-00-00", reverse=True)
         ws.clear()
-        # ヘッダー
         ws.update("A1:E1", [["date", "event", "venue", "photo", "link"]])
-        # データ
         if data:
             ws.update("A2:E" + str(len(data) + 1), data)
         return True
     except Exception as e:
-        print(f"  ✗ シート更新エラー: {e}")
+        print(f"  [ERR] シート更新エラー: {e}")
         return False
 
 
-# ── OCR ───────────────────────────────────────────────
-
 def ocr_image(image_path):
     """Google Cloud Vision API でテキスト抽出"""
-    client = vision.ImageTextDetector()
-    with open(image_path, "rb") as f:
-        image = vision.Image(content=f.read())
-    response = client.detect_text(image=image)
-    texts = response.text_annotations
-    if texts:
-        return texts[0].description
+    try:
+        client = vision.ImageTextDetector()
+        with open(image_path, "rb") as f:
+            image = vision.Image(content=f.read())
+        response = client.detect_text(image=image)
+        texts = response.text_annotations
+        if texts:
+            return texts[0].description
+    except Exception as e:
+        print(f"  [ERR] OCRエラー: {e}")
     return ""
 
 
@@ -104,24 +100,21 @@ def extract_event_info(text, filename):
     """OCR テキストから date / name / venue を抽出"""
     info = {"date": "", "name": "", "venue": ""}
 
-    # ── 日付抽出 ──────────────────────────────────
-    # YYYY-MM-DD or YYYY/MM/DD
+    # 日付抽出
     m = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', text)
     if m:
         info["date"] = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
     else:
-        # 日本語形式: 2026年7月1日
         m = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日?', text)
         if m:
             info["date"] = f"{int(m.group(1))}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
         else:
-            # 月日みの: 7月1日 (今年と仮定)
             m = re.search(r'(\d{1,2})月(\d{1,2})日?', text)
             if m:
                 y = datetime.now().year
                 info["date"] = f"{y}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
 
-    # ── 会場抽出 ──────────────────────────────────
+    # 会場抽出
     venue_keywords = [
         "woda", "kitsune", "shitamachi", "shelter",
         "bulldog", "electron", "wonder", "cook",
@@ -133,7 +126,6 @@ def extract_event_info(text, filename):
         if kw in text_lower:
             idx = text_lower.index(kw)
             context = text[max(0, idx-40):idx+len(kw)+40].strip()
-            # 改行で区切って会場名っぽい部分を抽出
             parts = context.replace("|", "\n").split("\n")
             for p in parts:
                 p = p.strip().rstrip(",、")
@@ -144,8 +136,7 @@ def extract_event_info(text, filename):
             if info["venue"]:
                 break
 
-    # ── イベント名 ────────────────────────────────
-    # 画像ファイル名: 20260717_elemog.jpeg → "elemog"
+    # イベント名
     stem = Path(filename).stem
     date_match = re.match(r'^(\d{8})', stem)
     if date_match:
@@ -153,13 +144,11 @@ def extract_event_info(text, filename):
         if name_part:
             info["name"] = name_part.replace("_", " ").title()
 
-    # 名が空の場合、OCRテキストから推測
     if not info["name"]:
         lines = text.split('\n')
         for line in lines:
             line = line.strip()
             if 5 < len(line) < 40:
-                # 日付や会場キーワードを含まないもの
                 if not re.search(r'\d{4}', line):
                     is_venue = any(kw in line.lower() for kw in venue_keywords)
                     if not is_venue:
@@ -181,10 +170,9 @@ def is_duplicate(sheets_data, date, name):
     return False
 
 
-# ── メイン ────────────────────────────────────────────
-
 def main():
     print("=== Flyer OCR Processing ===")
+    print(f"SHEET_ID: {SHEET_ID[:8] if SHEET_ID else '(未設定)'}...")
 
     # 画像ファイル取得
     image_files = []
@@ -196,7 +184,6 @@ def main():
         return
 
     print(f"画像数: {len(image_files)}")
-    print(f"SHEET_ID: {SHEET_ID[:8] if SHEET_ID else '(未設定)'}...")
 
     # Google Sheets クライアント
     gc = get_gc()
