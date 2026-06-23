@@ -2,9 +2,8 @@ name: Flyer OCR → Google Sheets
 
 on:
   schedule:
-    # 毎日 06:00 JST (= 21:00 UTC前日) に実行
     - cron: "0 21 * * *"
-  workflow_dispatch:  # 手動実行も可能
+  workflow_dispatch:
 
 jobs:
   process-flyers:
@@ -28,8 +27,10 @@ jobs:
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
         run: python scripts/ocr_process.py
 
-      - name: Show result (CSV export link)
+      - name: Show result
         if: success()
-        run: |
-          echo "✅ Flyer OCR 完了"
-          echo "Google Sheets: https://docs.google.com/spreadsheets/d/${{ secrets.GOOGLE_SHEET_ID }}"
+        run: echo "✅ Flyer OCR 完了"
+
+      - name: Show error
+        if: failure()
+        run: echo "❌ 失敗しました。GOOGLE_CREDENTIALS のJSON形式を確認してください。"

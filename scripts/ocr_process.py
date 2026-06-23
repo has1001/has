@@ -7,14 +7,13 @@ import sys
 import re
 import json
 import glob
-import csv
 from datetime import datetime
 from pathlib import Path
 
 # Google Cloud Vision API
 from google.cloud import vision
 
-# Google Sheets
+# Google Sheets (gspread v6+)
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -28,11 +27,63 @@ CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS", "")
 COL_DATE = 0       # A: 日付
 COL_EVENT = 1      # B: イベント名
 COL_VENUE = 2      # C: 会場
-COL_PHOTO = 3      # D: 画像（画像パスまたはDrive URL）
-COL_LINK = 4       # E: リンク（任意）
+COL_PHOTO = 3      # D: 画像
+COL_LINK = 4       # E: リンク
 
-# Drive フォルダ（「リンクを知っている全員」で公開）
 DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
+
+
+# ── Google Sheets ─────────────────────────────────────
+
+def get_gc():
+    """gspread Client を作成"""
+    if not SHEET_ID or not CREDENTIALS_JSON:
+        return None
+    try:
+        creds = Credentials.from_service_account_info(
+            json.loads(CREDENTIALS_JSON),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+        return gspread.Client(auth=creds)
+    except Exception as e:
+        print(f"  ✗ Google Sheets 接続エラー: {e}")
+        return None
+
+
+def get_sheets_data(gc):
+    """シートデータを取得"""
+    if not gc:
+        print("  ✗ GOOGLE_CREDENTIALS / GOOGLE_SHEET_ID が必要です")
+        return []
+    try:
+        sh = gc.authorize().open_by_key(SHEET_ID)
+        ws = sh.sheet1
+        data = ws.get_all_values()
+        return data[1:] if data else []  # ヘッダー除外
+    except Exception as e:
+        print(f"  ✗ シート取得エラー: {e}")
+        return []
+
+
+def update_sheet(gc, data):
+    """シートを更新（日付順ソート）"""
+    if not gc:
+        return
+    try:
+        sh = gc.authorize().open_by_key(SHEET_ID)
+        ws = sh.sheet1
+        # 日付でソート（新しい順）
+        data.sort(key=lambda r: str(r[COL_DATE]) if r[COL_DATE] else "0000-00-00", reverse=True)
+        ws.clear()
+        # ヘッダー
+        ws.update("A1:E1", [["date", "event", "venue", "photo", "link"]])
+        # データ
+        if data:
+            ws.update("A2:E" + str(len(data) + 1), data)
+        return True
+    except Exception as e:
+        print(f"  ✗ シート更新エラー: {e}")
+        return False
 
 
 # ── OCR ───────────────────────────────────────────────
@@ -71,45 +122,49 @@ def extract_event_info(text, filename):
                 info["date"] = f"{y}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
 
     # ── 会場抽出 ──────────────────────────────────
-    venue_names = [
+    venue_keywords = [
         "woda", "kitsune", "shitamachi", "shelter",
-        "bulldog", "electron", "Wonder", "cook",
-        "club earth", "club ...", "rooftop",
-        "hayamachi", "naked kitchen", "garret",
-        "lobelia", "gift", "live rooster",
-        "souterrain", "usagi", "crown",
-        "2.5d", "forte", "setter",
+        "bulldog", "electron", "wonder", "cook",
+        "rooftop", "naked kitchen", "lobelia",
+        "gift", "souterrain", "usagi", "forte",
     ]
     text_lower = text.lower()
-    for name in venue_names:
-        if name.lower() in text_lower:
-            # 文脈を少し取得
-            idx = text_lower.index(name.lower())
-            context = text[max(0, idx-30):idx+len(name)+30].strip()
-            # 前後の改行で区切る
-            parts = re.split(r'[\n|]', context)
-            info["venue"] = parts[0].strip().rstrip(",、")
-            break
+    for kw in venue_keywords:
+        if kw in text_lower:
+            idx = text_lower.index(kw)
+            context = text[max(0, idx-40):idx+len(kw)+40].strip()
+            # 改行で区切って会場名っぽい部分を抽出
+            parts = context.replace("|", "\n").split("\n")
+            for p in parts:
+                p = p.strip().rstrip(",、")
+                if len(p) > 1 and len(p) < 40:
+                    if kw in p.lower():
+                        info["venue"] = p
+                        break
+            if info["venue"]:
+                break
 
     # ── イベント名 ────────────────────────────────
-    # 画像ファイル名から推測: 20260717_elemog.jpeg → "elemog"
+    # 画像ファイル名: 20260717_elemog.jpeg → "elemog"
     stem = Path(filename).stem
-    date_prefix = re.match(r'^\d{8}', stem)
-    if date_prefix:
-        name_candidate = stem[len(date_prefix[0]):]
-        if name_candidate:
-            info["name"] = name_candidate.title()
+    date_match = re.match(r'^(\d{8})', stem)
+    if date_match:
+        name_part = stem[len(date_match[1]):]
+        if name_part:
+            info["name"] = name_part.replace("_", " ").title()
 
-    # 名が空の場合は、OCRテキストから長い行をイベント名とみなす
+    # 名が空の場合、OCRテキストから推測
     if not info["name"]:
         lines = text.split('\n')
         for line in lines:
             line = line.strip()
-            # 短い日付行や会場名は除外
-            if len(line) > 5 and len(line) < 40:
-                if not re.search(r'\d{4}', line) and not any(v.lower() in line.lower() for v in venue_names):
-                    info["name"] = line
-                    break
+            if 5 < len(line) < 40:
+                # 日付や会場キーワードを含まないもの
+                if not re.search(r'\d{4}', line):
+                    is_venue = any(kw in line.lower() for kw in venue_keywords)
+                    if not is_venue:
+                        info["name"] = line
+                        break
 
     return info
 
@@ -117,6 +172,8 @@ def extract_event_info(text, filename):
 def is_duplicate(sheets_data, date, name):
     """既存データと重複チェック"""
     for row in sheets_data:
+        if not row or len(row) < 2:
+            continue
         d = str(row[COL_DATE]).strip()
         n = str(row[COL_EVENT]).strip().lower()
         if d == date and n == name.lower():
@@ -124,75 +181,28 @@ def is_duplicate(sheets_data, date, name):
     return False
 
 
-# ── Google Sheets ─────────────────────────────────────
-
-def get_sheets_data():
-    """シートデータを取得"""
-    if not SHEET_ID or not CREDENTIALS_JSON:
-        print("  ✗ GOOGLE_SHEET_ID / GOOGLE_CREDENTIALS が必要です")
-        return []
-    try:
-        creds = Credentials.from_service_account_info(
-            json.loads(CREDENTIALS_JSON),
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-        gc = gspread.client(creds)
-        sh = gc.open_by_key(SHEET_ID)
-        ws = sh.sheet1
-        data = ws.get_all_values()
-        if data:
-            return data[1:]  # ヘッダー除外
-        return []
-    except Exception as e:
-        print(f"  ✗ シート取得エラー: {e}")
-        return []
-
-
-def update_sheet(data):
-    """シートを更新（日付順ソート＋文字色調整）"""
-    if not SHEET_ID or not CREDENTIALS_JSON:
-        return
-    try:
-        creds = Credentials.from_service_account_info(
-            json.loads(CREDENTIALS_JSON),
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
-        gc = gspread.client(creds)
-        sh = gc.open_by_key(SHEET_ID)
-        ws = sh.sheet1
-        # 日付でソート（新しい順）
-        data.sort(key=lambda r: str(r[COL_DATE]), reverse=True)
-        ws.clear()
-        # ヘッダー
-        ws.update("A1:E1", [["date", "event", "venue", "photo", "link"]])
-        # データ
-        if data:
-            ws.update("A2:E" + str(len(data) + 1), data)
-    except Exception as e:
-        print(f"  ✗ シート更新エラー: {e}")
-
-
 # ── メイン ────────────────────────────────────────────
 
 def main():
     print("=== Flyer OCR Processing ===")
-    print(f"FLYERS_DIR: {FLYERS_DIR}")
-    print(f"SHEET_ID: {SHEET_ID[:10]}..." if SHEET_ID else "SHEET_ID: (not set)")
 
     # 画像ファイル取得
-    image_files = glob.glob(str(FLYERS_DIR / "*.jpg")) + \
-                  glob.glob(str(FLYERS_DIR / "*.jpeg")) + \
-                  glob.glob(str(FLYERS_DIR / "*.png")) + \
-                  glob.glob(str(FLYERS_DIR / "*.JPG")) + \
-                  glob.glob(str(FLYERS_DIR / "*.JPEG")) + \
-                  glob.glob(str(FLYERS_DIR / "*.PNG"))
+    image_files = []
+    for ext in ["*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"]:
+        image_files.extend(glob.glob(str(FLYERS_DIR / ext)))
 
     if not image_files:
         print("flyer 画像が見つかりません。")
         return
 
-    # 既存シートデータを取得
-    sheet_data = get_sheets_data()
+    print(f"画像数: {len(image_files)}")
+    print(f"SHEET_ID: {SHEET_ID[:8] if SHEET_ID else '(未設定)'}...")
+
+    # Google Sheets クライアント
+    gc = get_gc()
+
+    # 既存データ
+    sheet_data = get_sheets_data(gc)
 
     added = 0
     for img_path in sorted(image_files):
@@ -204,41 +214,47 @@ def main():
         if not text or len(text.strip()) < 10:
             print("  (テキスト抽出結果が短すぎます)")
             continue
-        print(f"  OCR: {text[:100]}...")
+        print(f"  OCR: {text[:80]}...")
 
-        # イベント情報抽出
+        # 抽出
         info = extract_event_info(text, filename)
-        print(f"  抽出: date={info['date']}, name={info['name']}, venue={info['venue']}")
+        print(f"  date={info['date']} name={info['name']} venue={info['venue']}")
 
-        # 最低限、日付と名があるかチェック
+        # 必須チェック
         if not info["date"] or not info["name"]:
-            print("  ✗ 完全な情報抽出に失敗しました")
+            print("  ✗ 抽出失敗")
             continue
 
-        # 重複チェック
+        # 重複
         if is_duplicate(sheet_data, info["date"], info["name"]):
-            print("  ⊘ 重複データです")
+            print("  ⊘ 重複")
             continue
 
-        # photo 列には画像ファイル名を保存（後でDrive URLに変換可能）
+        # 画像URL
         photo_url = f"flyers/{filename}"
         if DRIVE_FOLDER_ID:
             photo_url = f"https://drive.google.com/file/d/{DRIVE_FOLDER_ID}/view?usp=sharing"
 
-        row = [info["date"], info["name"], info["venue"], photo_url, ""]
-        sheet_data.append(row)
+        sheet_data.append([info["date"], info["name"], info["venue"], photo_url, ""])
         added += 1
+        print("  ✓ 追加")
 
     # シート更新
     if added > 0:
-        print(f"\n---")
-        print(f"{added}件追加 → シート更新中...")
-        update_sheet(sheet_data)
-        print("完了！")
+        print(f"\n--- {added}件追加 ---")
+        if update_sheet(gc, sheet_data):
+            print("✅ シート更新完了")
+        else:
+            print("✗ シート更新失敗")
     else:
-        print("\n---")
-        print("追加するデータはありません。")
+        print("\n--- 追加データなし ---")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"FATAL: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
