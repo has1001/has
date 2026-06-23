@@ -11,7 +11,6 @@ SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS", "")
 DRIVE_FOLDER_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 
-# === 1. ENV CHECK ===
 print("Step 1: ENV CHECK")
 print(f"  SHEET_ID: {'SET ✓' if SHEET_ID else '✗ NOT SET'}")
 print(f"  CREDS:    {'SET ✓' if CREDS_JSON else '✗ NOT SET'}")
@@ -21,7 +20,7 @@ if not SHEET_ID or not CREDS_JSON:
     print("\nERROR: シークレット未設定です。")
     sys.exit(1)
 
-# === 2. FILES ===
+# === FILES ===
 print(f"\nStep 2: FILES ({FLYERS_DIR})")
 images = []
 for f in os.listdir(FLYERS_DIR):
@@ -32,7 +31,7 @@ if not images:
     print("  No images.")
     sys.exit(0)
 
-# === 3. Google Sheets ===
+# === Google Sheets ===
 print("\nStep 3: Google Sheets connect")
 try:
     creds = Credentials.from_service_account_info(
@@ -49,7 +48,7 @@ except Exception as e:
     print(f"  ✗ ERROR: {e}")
     sys.exit(1)
 
-# === 4. OCR ===
+# === OCR ===
 print("\nStep 4: OCR")
 try:
     creds_vision = Credentials.from_service_account_info(
@@ -122,7 +121,7 @@ for img_path in sorted(images):
         print(f"    duplicate")
         continue
 
-    # Photo URL - user manually entered, or use folder as fallback
+    # Photo URL - use user's manually entered value or fallback
     photo = f"flyers/{fn}"
     if DRIVE_FOLDER_ID:
         photo = f"https://drive.google.com/file/d/{DRIVE_FOLDER_ID}/view?usp=sharing"
