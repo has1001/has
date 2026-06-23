@@ -9,53 +9,19 @@ jobs:
   process-flyers:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install deps
-        run: pip install -r scripts/requirements.txt
+      - run: pip install -r scripts/requirements.txt
 
-      - name: Check Secrets
-        run: |
-          echo "SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID != '' && 'SET ✓' || 'NOT SET ✗' }}"
-          echo "CREDS: ${{ secrets.GOOGLE_CREDENTIALS != '' && 'SET ✓' || 'NOT SET ✗' }}"
-          echo "DRIVE: ${{ secrets.DRIVE_FOLDER_ID != '' && 'SET ✓' || 'NOT SET ✗' }}"
+      - run: echo "===SECRETS===" && echo "SHEET_ID: ${SHEET_ID_DEBUG:-${{ secrets.GOOGLE_SHEET_ID }}" | head -c 10 && echo "..." && echo "CREDS: ${CREDS_DEBUG:-${{ secrets.GOOGLE_CREDENTIALS }}" | head -c 10 && echo "..."
 
-      - name: OCR + Sync
-        run: |
-          python scripts/ocr_process.py 2>&1 | tee /tmp/ocr.log
-          echo "---LOG---"
-          cat /tmp/ocr.log
-          echo "---END---"
+      - run: |
+          python scripts/ocr_process.py
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
-
-      - name: Verify Sheet
-        run: |
-          python3 << 'PYEOF'
-import json, gspread
-from google.oauth2.service_account import Credentials
-import os
-
-creds = Credentials.from_service_account_info(
-    json.loads(os.environ["GOOGLE_CREDENTIALS"]),
-    scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
-)
-gc = gspread.Client(auth=creds)
-sh = gc.authorize().open_by_key(os.environ["GOOGLE_SHEET_ID"])
-ws = sh.sheet1
-data = ws.get_all_values()
-print(f"Sheet has {len(data)} rows")
-for i, row in enumerate(data[:10]):
-    print(f"  Row {i}: {row}")
-PYEOF
-        env:
-          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
