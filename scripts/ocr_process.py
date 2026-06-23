@@ -11,25 +11,28 @@ SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
 CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS", "")
 DRIVE_ID = os.environ.get("DRIVE_FOLDER_ID", "")
 
+# === 1. ENV CHECK ===
 print("Step 1: ENV CHECK")
 print(f"  SHEET_ID: {'SET ✓' if SHEET_ID else '✗ NOT SET'}")
 print(f"  CREDS:    {'SET ✓' if CREDS_JSON else '✗ NOT SET'}")
 print(f"  DRIVE:    {'SET ✓' if DRIVE_ID else '✗ NOT SET'}")
 
 if not SHEET_ID or not CREDS_JSON:
-    print("\nERROR: シークレット未設定です。GitHub Settings → Secrets に登録してください。")
+    print("\nERROR: シークレット未設定です。")
     sys.exit(1)
 
+# === 2. FILES ===
 print(f"\nStep 2: FILES ({FLYERS_DIR})")
 images = []
 for f in os.listdir(FLYERS_DIR):
     if f.lower().endswith(('.jpg', '.jpeg', '.png')):
         images.append(str(FLYERS_DIR / f))
-print(f"  {len(images)} images found")
+print(f"  {len(images)} images")
 if not images:
-    print("  No images. Exit.")
+    print("  No images.")
     sys.exit(0)
 
+# === 3. Google Sheets ===
 print("\nStep 3: Google Sheets connect")
 try:
     creds = Credentials.from_service_account_info(
@@ -37,53 +40,76 @@ try:
         scopes=["https://www.googleapis.com/auth/spreadsheets"]
     )
     gc = gspread.Client(auth=creds)
-    sh = gc.authorize().open_by_key(SHEET_ID)
+    sh = gc.open_by_key(SHEET_ID)
     ws = sh.sheet1
     data = ws.get_all_values()
     existing = data[1:] if data else []
-    print(f"  Connected! {len(existing)} rows existing")
+    print(f"  ✓ {len(existing)} rows")
 except Exception as e:
-    print(f"  ERROR: {e}")
+    print(f"  ✗ ERROR: {e}")
     sys.exit(1)
 
+# === 4. OCR ===
 print("\nStep 4: OCR")
+try:
+    creds_vision = Credentials.from_service_account_info(
+        json.loads(CREDS_JSON),
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    client = vision.ImageAnnotatorClient(credentials=creds_vision)
+except Exception as e:
+    print(f"  ✗ OCR ERROR: {e}")
+    sys.exit(1)
+
 added = []
 for img_path in sorted(images):
     fn = os.path.basename(img_path)
     print(f"  → {fn}")
     try:
-        client = vision.ImageTextDetector()
         with open(img_path, "rb") as f:
             image = vision.Image(content=f.read())
-        response = client.detect_text(image=image)
+        response = client.text_detection(image=image)
         texts = response.text_annotations
         text = texts[0].description if texts else ""
     except Exception as e:
         print(f"    OCR ERROR: {e}")
         continue
-    
+
     if len(text.strip()) < 10:
-        print(f"    (too short: {len(text)} chars)")
+        print(f"    (too short)")
         continue
-    
-    print(f"    OCR: {text[:60]}...")
-    
+
     # Parse date
     m = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', text)
     date = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}" if m else ""
-    
-    # Parse name
+
+    # Parse name from filename
     stem = Path(fn).stem
     dm = re.match(r'^(\d{8})', stem)
     name = stem[len(dm[1]):].replace("_", " ").title() if dm else ""
-    
-    print(f"    date={date} name={name}")
-    
+
+    # Parse venue
+    venue = ""
+    venue_kw = ["woda", "kitsune", "shitamachi", "shelter", "bulldog"]
+    for kw in venue_kw:
+        if kw in text.lower():
+            idx = text.lower().index(kw)
+            ctx = text[max(0, idx-30):idx+len(kw)+30].strip()
+            for p in ctx.split("\n"):
+                p = p.strip().rstrip(",、")
+                if len(p) > 1 and len(p) < 40 and kw in p.lower():
+                    venue = p
+                    break
+            if venue:
+                break
+
+    print(f"    date={date} name={name} venue={venue}")
+
     if not date or not name:
-        print("    SKIP (missing date/name)")
+        print(f"    SKIP")
         continue
-    
-    # Check duplicate
+
+    # Duplicate check
     is_dup = False
     for row in existing:
         if len(row) >= 2:
@@ -92,17 +118,16 @@ for img_path in sorted(images):
             if d == date and n == name.lower():
                 is_dup = True
                 break
-    
     if is_dup:
-        print("    SKIP (duplicate)")
+        print(f"    duplicate")
         continue
-    
+
     photo = f"flyers/{fn}"
     if DRIVE_ID:
         photo = f"https://drive.google.com/file/d/{DRIVE_ID}/view?usp=sharing"
-    
-    added.append([date, name, "", photo, ""])
-    print("    ✓")
+
+    added.append([date, name, venue, photo, ""])
+    print(f"    ✓")
 
 print(f"\nStep 5: UPDATE ({len(added)} new)")
 if added:
@@ -110,23 +135,24 @@ if added:
         data.extend(added)
         data.sort(key=lambda r: str(r[0]) if r[0] else "0000", reverse=True)
         ws.clear()
-        ws.update("A1:E1", [["date", "event", "venue", "photo", "link"]])
-        ws.update("A2:E" + str(len(data) + 1), data)
+        ws.update(values=[["date", "event", "venue", "photo", "link"]], range_name="A1:E1")
+        if data:
+            ws.update(values=data[1:], range_name="A2:E" + str(len(data)))
         print("  ✓ Sheet UPDATED!")
     except Exception as e:
-        print(f"  ERROR: {e}")
+        print(f"  ✗ ERROR: {e}")
         import traceback
         traceback.print_exc()
 else:
-    print("  SKIP (no new data)")
+    print("  SKIP (no new)")
 
 print("\nStep 6: VERIFY")
 try:
     fresh = ws.get_all_values()
-    print(f"  Sheet now has {len(fresh)} rows")
+    print(f"  Sheet now: {len(fresh)} rows")
     for i, row in enumerate(fresh[:5]):
         print(f"    Row {i}: {row}")
 except Exception as e:
-    print(f"  ERROR: {e}")
+    print(f"  ✗ ERROR: {e}")
 
-print("\n=== COMPLETE ===")
+print("\n=== DONE ===")
