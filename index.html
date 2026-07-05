@@ -812,13 +812,19 @@ a.gig-card{display:block;color:inherit}
         }
       });
 
-      if (upList) {
-        if (upcoming.length) {
-          /* シートにphotoが無い行は、既存HTMLに埋め込み済みの画像を名前で引いて使う */
-          var fallbackImages = buildImageMap(upList);
-          renderCards(upList, upcoming, fallbackImages);
-        }
-        /* upcoming が空ならHTMLの静的カードをそのまま表示 */
+      if (upList && upcoming.length) {
+        /* 静的HTMLに既にある日付はスキップ、新規のものだけ追加 */
+        var existingDates = new Set();
+        upList.querySelectorAll('.gig-card').forEach(function(c){
+          var dateEl = c.querySelector('.gig-card-date');
+          if (!dateEl) return;
+          var m = dateEl.textContent.match(/(\d{4})\.(\d{1,2})\.(\d{1,2})/);
+          if (m) existingDates.add(new Date(+m[1],+m[2]-1,+m[3]).toDateString());
+        });
+        var newItems = upcoming.filter(function(it){
+          return !it.date || !existingDates.has(it.date.toDateString());
+        });
+        if (newItems.length) prependCards(upList, newItems);
       }
       /* 過去アーカイブはHTMLに埋め込み済み(固定)。
          シートに type=past 行があれば、その分だけ先頭に追加表示する */
