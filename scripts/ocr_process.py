@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Google Sheets 自動管理スクリプト
 - 日付が過ぎたギグを archive に自動移動
-- 既存のphoto URLは上書きしない
+- 既存データは上書きしない（安全な追記モード）
 """
 import sys, json
 from datetime import datetime
@@ -34,41 +34,39 @@ if len(data) < 2:
     print("データなし。")
     sys.exit(0)
 
-rows = data[1:]
+rows = data[1:]  # ヘッダー除外
 print(f"既存データ: {len(rows)}行")
-
-# 既存photo URLの保存
-saved_photos = {}
-for i, row in enumerate(rows):
-    if len(row) >= 2 and row[0] and row[1]:
-        key = (str(row[0]).strip(), str(row[1]).strip().lower())
-        saved_photos[key] = row[3] if len(row) > 3 else ""
 
 today = datetime.now()
 archived = 0
-for i, row in enumerate(rows):
-    if len(row) >= 1 and row[0]:
-        try:
-            gig_date = datetime.strptime(row[0], "%Y-%m-%d")
-            if gig_date < today:
-                # already archived?
-                if len(row) > 4 and row[4].strip() == "past":
-                    continue
-                # restore photo URL if user had one
-                key = (row[0], row[1].strip().lower())
-                if key in saved_photos and saved_photos[key]:
-                    while len(row) < 4:
-                        row.append("")
-                    row[3] = saved_photos[key]
-                # mark as past
-                row.append("past")
-                rows[i] = row
-                archived += 1
-        except ValueError:
-            pass
 
+# アーカイズ処理
+for i, row in enumerate(rows):
+    # ヘッダー除外済みの行が空ならスキップ
+    if not row or not row[0]:
+        continue
+    
+    # 日付チェック
+    try:
+        gig_date = datetime.strptime(row[0].strip(), "%Y-%m-%d")
+        past = gig_date < today
+        
+        # まだ past タグがないかつ過去の日付
+        if past and (not row or len(row) < 5 or row[4].strip() != "past"):
+            # 必要に応じて列を確保
+            while len(row) < 5:
+                row.append("")
+            row[4] = "past"
+            rows[i] = row
+            archived += 1
+    except ValueError:
+        # 日付形式エラーは無視
+        pass
+
+# 更新処理
 if archived > 0:
     try:
+        # clear + 全体書き込み
         ws.clear()
         ws.update(values=[["date", "event", "venue", "photo", "link", "type"]], range_name="A1:F1")
         if rows:
